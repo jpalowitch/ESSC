@@ -25,8 +25,50 @@
 
 ###essc Function. Run this function to extract communities
 essc = function(Adj.Matrix, alpha, Null = c("Binomial", "Poisson"),
-                Num.Samples = nrow(Adj.Matrix), max.iter=300, verbose=FALSE){
+                Num.Samples = nrow(Adj.Matrix), max.iter=300, verbose=FALSE,
+                tau=0.9, exhaustive=TRUE){
     symdiff = function(X,Y){setdiff(union(X,Y),intersect(X,Y))}
+
+    # Function to filter overlap
+    filter_overlap <- function (comms, tau) {
+
+      K <- length(comms)
+      scores <- unlist(lapply(comms, length))
+
+      jaccard_mat0 <- matrix(0, K, K)
+      for (i in 1:K) {
+        for (j in 1:K) {
+          jaccard_mat0[i, j] <- length(intersect(comms[[i]], comms[[j]])) /
+            length(comms[[i]])
+        }
+      }
+
+      jaccard_mat <- jaccard_mat0
+      diag(jaccard_mat) <- 0
+      max_jacc <- max(jaccard_mat)
+      deleted_comms <- integer(0)
+
+      while (max_jacc > tau) {
+
+        inds <- which(jaccard_mat == max_jacc, arr.ind = TRUE)[1, ]
+
+        # keep smaller comm
+        delete_comm <- inds[which.min(c(scores[inds[1]], scores[inds[2]]))]
+        jaccard_mat[delete_comm, ] <- 0
+        jaccard_mat[, delete_comm] <- 0
+        deleted_comms <- c(deleted_comms, delete_comm)
+        max_jacc <- max(jaccard_mat)
+
+      }
+
+      kept_comms <- setdiff(1:K, deleted_comms)
+
+      return(list("final_comms" = comms[kept_comms],
+                  "kept_comms" = kept_comms))
+
+    }
+
+    # Set-up
     degrees <- rowSums(Adj.Matrix)
     n <- length(degrees)
     index <- 1:dim(Adj.Matrix)[1]
@@ -42,8 +84,13 @@ essc = function(Adj.Matrix, alpha, Null = c("Binomial", "Poisson"),
 
     i <- 1
     count <- 0
+    clustered_nodes <- integer(0)
     #Running long loop
     for(node in extractFrom){
+
+      if (node %in% clustered_nodes)
+        next
+
         count <- count+1
         #cat("######################################################\n")
         #cat(paste0("extraction ",count,"\n"))
@@ -75,13 +122,20 @@ essc = function(Adj.Matrix, alpha, Null = c("Binomial", "Poisson"),
         } else{
             nodes[2, count] <- 0
         }
+
+      clustered_nodes <- unlist(Community)
     }
 
     Community <- Community[unlist(lapply(Community,function(comm)length(comm)>0))]
-    Background <- setdiff(1:n,unlist(Community))
 
     if(length(Community) == 0)
         Community <- list(NULL)
+
+    if (length(Community) > 1) {
+      Community <- filter_overlap(Community, tau)$final_comms
+    }
+
+    Background <- setdiff(1:n,unlist(Community))
 
     return(list(Communities = Community, Background = Background))
 }
